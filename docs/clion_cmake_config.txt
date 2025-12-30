@@ -1,0 +1,21 @@
+============================================
+Toolchain (custom devkitARM toolchain):
+============================================
+ - Toolset:         Ubuntu (WSL)
+ - Cmake:           WSL CMake (default)
+ - Build Tool:      (default)
+ - C compiler:      /opt/devkitpro/devkitARM/bin/arm-none-eabi-gcc
+ - C++ compiler:    /opt/devkitpro/devkitARM/bin/arm-none-eabi-g++
+ - Debugger:        /opt/devkitpro/devkitARM/bin/arm-none-eabi-gdb
+
+============================================
+Cmake profile:
+============================================
+ - Build type:      Release
+ - Toolchain:       custom devkitARM toolchain
+ - flags:           -DCMAKE_TOOLCHAIN_FILE=/opt/devkitpro/cmake/3DS.cmake
+
+============================================
+Direct command (to check)
+============================================
+/usr/bin/cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=/opt/devkitpro/devkitARM/bin/arm-none-eabi-gcc -DCMAKE_CXX_COMPILER=/opt/devkitpro/devkitARM/bin/arm-none-eabi-g++ -DCMAKE_TOOLCHAIN_FILE=/opt/devkitpro/cmake/3DS.cmake -G "Unix Makefiles" -S /home/ebbew/3dsdev -B /home/ebbew/3dsdev/cmake-build-devkitarm

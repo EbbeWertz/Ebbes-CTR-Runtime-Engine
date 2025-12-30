@@ -1,0 +1,8 @@
+# Clion (Jetbrains) generated build folder
+# ! NOT used for building, only for IDE support of devkitpro libraries
+cmake-build*/
+.idea/
+
+# actual build folders:
+build/
+bin/

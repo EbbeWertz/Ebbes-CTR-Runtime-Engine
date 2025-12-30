@@ -1,0 +1,14 @@
+1) USE WSL if in windows:
+ - Devkitpro should be in WSL
+ - extra tools can be in windows (makerom, bannertool, ...)
+ - This project should be in WSL
+
+2) Check paths in makefile
+
+3) prepare project & load cake environment:
+  -> `make clean setup`
+
+4) build (& run):
+  -> `make build`                   build 3dsx file in ./bin/
+  -> `make build run`               build and open in citra
+  -> `make clean setup build run`   full rebuild (needed if romfs content changed)

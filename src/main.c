@@ -85,7 +85,7 @@ int main(void) {
     sleep(2); // ndsp needs some startup time (otherwise it stutters at start)
 
 
-    FILE *pcmDataFileHandle = fopen("romfs:/music16.raw", "rb");
+    FILE *pcmDataFileHandle = fopen("romfs:/audio/song1_pcm16_44100hz_stereo.raw", "rb");
     if (!pcmDataFileHandle) {
         printf("Failed to open PCM file\n");
         sleep(3);

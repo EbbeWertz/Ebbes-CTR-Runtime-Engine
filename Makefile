@@ -37,6 +37,18 @@ run:
 	@echo "Launching citra..."
 	@$(CITRA_PATH) $(OUTPUT_DIR)/*.3dsx
 
+wav2raw:
+	@mkdir -p resources/romfs/audio
+	@for f in resources/assets/audio/*.wav; do \
+		o="resources/romfs/audio/$$(basename "$${f%.wav}").raw"; \
+		if [ -e "$$o" ]; then \
+			echo "SKIPPING $$f (already exists)"; \
+		else \
+			echo "CONVERT $$f -> $$o"; \
+			ffmpeg -i "$$f" -f s16le "$$o"; \
+		fi; \
+	done
+
 runcia:
 	@echo "Launching citra from cia file..."
 	@$(CITRA_PATH) $(BUILD_DIR)/*.cia

@@ -6,3 +6,6 @@ cmake-build*/
 # actual build folders:
 build/
 bin/
+
+#resources (ROM file storage, assets & asset artifacts)
+resources/

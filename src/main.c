@@ -9,12 +9,23 @@
  *  ==========================================
  *  | Group name | Channel | Size[kB] | Purpose (note: ADPCM cannot be streamed)
  *  |------------|---------|----------|---------------------------------------------------
- *  | MUSIC      | 22-23   | 2x  48   | Triple buffered ogg vorbis encoded music streaming
- *  | ADPCM_L    | 20-21   | 2x  128  | Large single buffer ADPCM oneshot
- *  | ADPCM_M    | 16-19   | 4x  32   | Medium single buffer ADPCM oneshot
- *  | GP         | 00-15   | 16x 16   | general purpose:
- *  |            |         |          |  - Dual buffer PCM streaming
- *  |            |         |          |  - Small single buffer ADPCM oneshot
+ *  | MUSIC      | 22-23   | 2x  48   | Triple buffered music streaming
+ *  | ADPCM_XL   | 20-21   | 2x  128  | Large single buffer ADPCM
+ *  | GP_L       | 16-19   | 4x  32   | General purpose large
+ *  | GP_S       | 00-15   | 16x 16   | General purpose small
+ *
+ *  Use cases:
+ *  MUSIC
+ *   - Streaming music from an ogg vorbis decoder
+ *  ADPCM_XL
+ *   - Playing extra long ADPCM encoded sounds (eg. ambient sounds)
+ *  GP_L
+ *   - Stereo PCM16 streaming (dual 16 kB buffer streamed)
+ *   - Medium length ADPCM sounds (single buffer oneshot)
+ *  GP_S
+ *   - Mono PCM16 or any PCM8 streaming (dual 8 kB buffer streamed)
+ *   - Short length ADPCM sounds (single buffer oneshot)
+ *   - Fallback for stereo PCM16 if GP_L is full
  *
  *  ==========================================
  *  16bit MONO PCM/ADPCM REFERENCE
@@ -31,13 +42,6 @@
  *  - 8bit mono PCM will be the PCM time * 2
  *  - 8bit stereo PCM will be equal to the pcm time
  */
-
-
-
-
-
-
-
 
 
 

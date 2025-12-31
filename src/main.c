@@ -3,6 +3,44 @@
 #include <string.h>
 #include <sys/unistd.h>
 
+/*
+ *  ==========================================
+ *  BUFFER LAYOUT
+ *  ==========================================
+ *  | Group name | Channel | Size[kB] | Purpose (note: ADPCM cannot be streamed)
+ *  |------------|---------|----------|---------------------------------------------------
+ *  | MUSIC      | 22-23   | 2x  48   | Triple buffered ogg vorbis encoded music streaming
+ *  | ADPCM_L    | 20-21   | 2x  128  | Large single buffer ADPCM oneshot
+ *  | ADPCM_M    | 16-19   | 4x  32   | Medium single buffer ADPCM oneshot
+ *  | GP         | 00-15   | 16x 16   | general purpose:
+ *  |            |         |          |  - Dual buffer PCM streaming
+ *  |            |         |          |  - Small single buffer ADPCM oneshot
+ *
+ *  ==========================================
+ *  16bit MONO PCM/ADPCM REFERENCE
+ *  ==========================================
+ *  | Buffer    | Playback Time [ms]/[ms] PCM/ADPCM per sample rate
+ *  | Size [kB] | 48'000 Hz  | 44'100 Hz  | 22'050 Hz   | 11'025 Hz   | 8'000 Hz
+ *  |-----------|------------|------------|-------------|-------------|----------
+ *  | 8 kB      |  85 /  341 |  92 /  372 |  186 /  743 |  372 / 1.5s |  512 / 2.0s
+ *  | 16 kB     | 170 /  683 | 186 /  743 |  372 / 1.5s |  743 / 3.0s | 1.0s / 4.1s
+ *  | 32 kB     | 341 / 1.4s | 372 / 1.5s |  743 / 3.0s | 1.5s / 5.9s | 2.0s / 8.2s
+ *  | 64 kB     | 683 / 2.7s | 743 / 3.0s | 1.5s / 5.9s | 3.0s / 12s  | 4.1s / 16s
+ *
+ *  - 16bit stereo PCM will be the PCM time / 2 (stereo adpcm isnt supported by ndsp)
+ *  - 8bit mono PCM will be the PCM time * 2
+ *  - 8bit stereo PCM will be equal to the pcm time
+ */
+
+
+
+
+
+
+
+
+
+
 #define MUSIC1_PATH "romfs:/audio/song1_pcm16_44100hz_stereo.raw"
 #define MUSIC1_SAMPLE_RATE 44100.0f
 #define MUSIC1_FORMAT NDSP_FORMAT_STEREO_PCM16

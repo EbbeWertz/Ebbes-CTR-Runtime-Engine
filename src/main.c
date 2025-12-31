@@ -7,10 +7,10 @@
 #define STEREO 2
 
 // sample properties
-#define SAMPLE_RATE 44100.0f
+#define SAMPLE_RATE 44100.0f //44100.0f
 #define SAMPLE_N_CHANNELS STEREO
 
-#define BYTES_PER_SAMPLE (2 * SAMPLE_N_CHANNELS)
+#define BYTES_PER_SAMPLE (2 * SAMPLE_N_CHANNELS) // 2 bytes for 16bit
 #define STREAM_BUF_SIZE (16*1024)
 #define N_BUFFERS_PER_CHANNEL 3 // 2 (dual buffering, good for sfx) or 3 (triple, more robust for music)
 
@@ -25,7 +25,7 @@ static ndspWaveBuf ndspBuffers[N_BUFFERS_PER_CHANNEL];
 static s16 *pcmBuffers[N_BUFFERS_PER_CHANNEL];
 
 static bufferRefillResult fillBufferFromFile(const int buffer_index, FILE *file) {
-    printf("filling buffer %d\n", buffer_index);
+    printf("filling buffer %d", buffer_index);
     // read new PCM data from file
     const size_t bytesRead = fread(pcmBuffers[buffer_index], 1,STREAM_BUF_SIZE, file);
     if (bytesRead == 0) {
@@ -40,6 +40,7 @@ static bufferRefillResult fillBufferFromFile(const int buffer_index, FILE *file)
     if (flushResult) return BUFF_REFILL_RES_MEMORY_FLUSH_ERROR;
     // queue buffer
     ndspChnWaveBufAdd(0, &ndspBuffers[buffer_index]);
+    printf(" - done\n");
     return BUFF_REFILL_RES_OK;
 }
 
@@ -53,7 +54,7 @@ static void printRefillResult(const bufferRefillResult res) {
             return;
         case BUFF_REFILL_RES_MEMORY_FLUSH_ERROR:
             printf("[ERROR] Could not flush audio buffer\n");
-        default:
+        default: break;
     }
 }
 
@@ -92,9 +93,7 @@ int main(void) {
         return 1;
     }
 
-
-    const bool allocSuccess = initBuffers();
-    if (!allocSuccess) {
+    if (!initBuffers()) {
         printf("Failed to allocate linear PCM buffers\n");
         sleep(3);
         return 1;

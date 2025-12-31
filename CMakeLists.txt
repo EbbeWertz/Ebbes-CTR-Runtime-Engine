@@ -3,7 +3,8 @@ project(My3DSProject)
 enable_language(C CXX ASM)
 
 set(ROMFS_DIR "${CMAKE_SOURCE_DIR}/resources/romfs")
-set(SOURCES src/main.c)
+set(SOURCES
+        src/adpcm.c)
 
 add_executable(${PROJECT_NAME} ${SOURCES})
 

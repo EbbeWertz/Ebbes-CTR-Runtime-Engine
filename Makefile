@@ -24,7 +24,6 @@ build:
 	@cmake --build $(CMAKE_BUILD_DIR)
 	@mkdir -p $(BUILD_DIR)
 	@mkdir -p $(OUTPUT_DIR)
-	ls ./$(CMAKE_BUILD_DIR)/*.3dsx
 	@mv ./$(CMAKE_BUILD_DIR)/*.3dsx ./$(OUTPUT_DIR)
 #	@cp $(CMAKE_BUILD_DIR)/*.elf $(OUTPUT_DIR)/App.elf
 

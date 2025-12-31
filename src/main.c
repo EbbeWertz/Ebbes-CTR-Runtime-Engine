@@ -78,6 +78,14 @@ static void initChannel() {
     ndspChnSetFormat(0, SAMPLE_N_CHANNELS == STEREO ? NDSP_FORMAT_STEREO_PCM16 : NDSP_FORMAT_MONO_PCM16);
 }
 
+void audioCallback(void* pcmDataFileHandle) {
+    for (int i = 0; i < N_BUFFERS_PER_CHANNEL; i++)
+        if (ndspBuffers[i].status == NDSP_WBUF_DONE) {
+            const bufferRefillResult res = fillBufferFromFile(i, (FILE*)pcmDataFileHandle);
+            printRefillResult(res);
+        }
+}
+
 int main(void) {
     gfxInitDefault();
     consoleInit(GFX_TOP, nullptr);
@@ -100,6 +108,7 @@ int main(void) {
     }
 
     initChannel();
+    ndspSetCallback(audioCallback, pcmDataFileHandle);
 
     // pre-fill both buffers
     for (int i = 0; i < N_BUFFERS_PER_CHANNEL; i++) {
@@ -107,17 +116,10 @@ int main(void) {
         printRefillResult(res);
     }
 
+    // main loop
     while (aptMainLoop()) {
         hidScanInput();
         if (hidKeysDown() & KEY_START) break;
-
-        // check buffers for refill
-        for (int i = 0; i < N_BUFFERS_PER_CHANNEL; i++)
-            if (ndspBuffers[i].status == NDSP_WBUF_DONE) {
-                const bufferRefillResult res = fillBufferFromFile(i, pcmDataFileHandle);
-                printRefillResult(res);
-            }
-
         gspWaitForVBlank();
         gfxSwapBuffers();
     }

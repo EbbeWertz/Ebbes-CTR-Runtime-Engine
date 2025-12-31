@@ -4,7 +4,7 @@ enable_language(C CXX ASM)
 
 set(ROMFS_DIR "${CMAKE_SOURCE_DIR}/resources/romfs")
 set(SOURCES
-        src/adpcm.c)
+        src/main.c)
 
 add_executable(${PROJECT_NAME} ${SOURCES})
 

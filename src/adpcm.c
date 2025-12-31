@@ -11,7 +11,7 @@
 // adpcm is fixed mono
 
 // #define BYTES_PER_SAMPLE // isnt a variable integer. adpcm has 2 samples per byte (1 per 4bit nibble)
-#define STREAM_BUF_SIZE (16*1024)
+#define STREAM_BUF_SIZE (96*1024) // bytes per second = rate/2 = 22kB
 #define N_BUFFERS 4 // triple buffering recommended for ADPCM
 
 typedef enum {

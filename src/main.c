@@ -14,6 +14,8 @@
 #define STREAM_BUF_SIZE (16*1024)
 #define N_BUFFERS_PER_CHANNEL 3 // 2 (dual buffering, good for sfx) or 3 (triple, more robust for music)
 
+#define AUDIO_THREAD_STACK_SIZE (1024*1024) // 1MB
+
 typedef enum {
     BUFF_REFILL_RES_OK,
     BUFF_REFILL_RES_FILEREAD_ERROR,
@@ -21,11 +23,14 @@ typedef enum {
     BUFF_REFILL_RES_MEMORY_FLUSH_ERROR
 } bufferRefillResult;
 
-static ndspWaveBuf ndspBuffers[N_BUFFERS_PER_CHANNEL];
-static s16 *pcmBuffers[N_BUFFERS_PER_CHANNEL];
+LightEvent audioRequestEvent;
+volatile bool audioThreadRunning = true;
 
-static bufferRefillResult fillBufferFromFile(const int buffer_index, FILE *file) {
-    printf("filling buffer %d", buffer_index);
+ndspWaveBuf ndspBuffers[N_BUFFERS_PER_CHANNEL];
+s16 *pcmBuffers[N_BUFFERS_PER_CHANNEL];
+
+bufferRefillResult fillBufferFromFile(const int buffer_index, FILE *file) {
+    printf("filling buffer %d\n", buffer_index);
     // read new PCM data from file
     const size_t bytesRead = fread(pcmBuffers[buffer_index], 1,STREAM_BUF_SIZE, file);
     if (bytesRead == 0) {
@@ -40,11 +45,10 @@ static bufferRefillResult fillBufferFromFile(const int buffer_index, FILE *file)
     if (flushResult) return BUFF_REFILL_RES_MEMORY_FLUSH_ERROR;
     // queue buffer
     ndspChnWaveBufAdd(0, &ndspBuffers[buffer_index]);
-    printf(" - done\n");
     return BUFF_REFILL_RES_OK;
 }
 
-static void printRefillResult(const bufferRefillResult res) {
+inline void printRefillResult(const bufferRefillResult res) {
     switch (res) {
         case BUFF_REFILL_RES_FILEREAD_ERROR:
             printf("[ERROR] Could not read from file\n");
@@ -58,7 +62,7 @@ static void printRefillResult(const bufferRefillResult res) {
     }
 }
 
-static bool initBuffers() {
+bool initBuffers() {
     for (int i = 0; i < N_BUFFERS_PER_CHANNEL; i++) {
         // allocate linear memory for pcm data buffers
         pcmBuffers[i] = linearAlloc(STREAM_BUF_SIZE);
@@ -69,7 +73,7 @@ static bool initBuffers() {
     return true;
 }
 
-static void initChannel() {
+void initChannel() {
     ndspSetOutputMode(NDSP_OUTPUT_STEREO);
     ndspChnReset(0);
     ndspChnInitParams(0);
@@ -78,28 +82,53 @@ static void initChannel() {
     ndspChnSetFormat(0, SAMPLE_N_CHANNELS == STEREO ? NDSP_FORMAT_STEREO_PCM16 : NDSP_FORMAT_MONO_PCM16);
 }
 
-void audioCallback(void* pcmDataFileHandle) {
-    for (int i = 0; i < N_BUFFERS_PER_CHANNEL; i++)
+void audioCallback([[maybe_unused]] void* unused_) {
+    LightEvent_Signal(&audioRequestEvent);
+}
+
+
+inline void handleThreadRequest(FILE* pcmDataFileHandle) {
+    for (int i = 0; i < N_BUFFERS_PER_CHANNEL; i++) {
         if (ndspBuffers[i].status == NDSP_WBUF_DONE) {
-            const bufferRefillResult res = fillBufferFromFile(i, (FILE*)pcmDataFileHandle);
+            const bufferRefillResult res = fillBufferFromFile(i, pcmDataFileHandle);
             printRefillResult(res);
         }
+    }
 }
+
+void audioThread([[maybe_unused]] void* unused_) {
+    printf("audio thread started\n");
+
+    // open file handle
+    FILE *pcmDataFileHandle = fopen("romfs:/audio/song1_pcm16_44100hz_stereo.raw", "rb");
+    if (!pcmDataFileHandle) {
+        printf("Failed to open PCM file\n");
+        sleep(3);
+        return;
+    }
+
+    // prefill buffers
+    for (int i = 0; i < N_BUFFERS_PER_CHANNEL; i++) {
+        const bufferRefillResult res = fillBufferFromFile(i, pcmDataFileHandle);
+        printRefillResult(res);
+    }
+
+    // main audio thread loop
+    while (audioThreadRunning) {
+        handleThreadRequest(pcmDataFileHandle);
+        LightEvent_Wait(&audioRequestEvent);
+    }
+    fclose(pcmDataFileHandle);
+}
+
 
 int main(void) {
     gfxInitDefault();
     consoleInit(GFX_TOP, nullptr);
     romfsInit();
     ndspInit();
+    LightEvent_Init(&audioRequestEvent, RESET_ONESHOT);
     sleep(2); // ndsp needs some startup time (otherwise it stutters at start)
-
-
-    FILE *pcmDataFileHandle = fopen("romfs:/audio/song1_pcm16_44100hz_stereo.raw", "rb");
-    if (!pcmDataFileHandle) {
-        printf("Failed to open PCM file\n");
-        sleep(3);
-        return 1;
-    }
 
     if (!initBuffers()) {
         printf("Failed to allocate linear PCM buffers\n");
@@ -108,13 +137,14 @@ int main(void) {
     }
 
     initChannel();
-    ndspSetCallback(audioCallback, pcmDataFileHandle);
+    ndspSetCallback(audioCallback, nullptr);
 
-    // pre-fill both buffers
-    for (int i = 0; i < N_BUFFERS_PER_CHANNEL; i++) {
-        const bufferRefillResult res = fillBufferFromFile(i, pcmDataFileHandle);
-        printRefillResult(res);
-    }
+    int32_t priority = 0x30; // main thread priority
+    svcGetThreadPriority(&priority, CUR_THREAD_HANDLE);
+    priority -= 1; // increase priority (aka smaller priority value)
+    priority = priority < 0x18 ? 0x18 : priority;
+    priority = priority > 0x3F ? 0x3F : priority;
+    const Thread audioThreadId = threadCreate(audioThread, nullptr,AUDIO_THREAD_STACK_SIZE, priority,-1, false);
 
     // main loop
     while (aptMainLoop()) {
@@ -124,11 +154,15 @@ int main(void) {
         gfxSwapBuffers();
     }
 
+    audioThreadRunning = false;
+    LightEvent_Signal(&audioRequestEvent);
+    threadJoin(audioThreadId, UINT64_MAX);
+    threadFree(audioThreadId);
+
     for (int i = 0; i < N_BUFFERS_PER_CHANNEL; i++)
         if (pcmBuffers[i])
             linearFree(pcmBuffers[i]);
 
-    fclose(pcmDataFileHandle);
     ndspExit();
     romfsExit();
     gfxExit();

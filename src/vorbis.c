@@ -2,69 +2,23 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/unistd.h>
+#include <tremor/ivorbisfile.h>
+#include <tremor/ivorbiscodec.h>
 
-/*
- *  ==========================================
- *  BUFFER LAYOUT
- *  ==========================================
- *  | Group name | Channel | Size[kB] | Purpose (note: ADPCM cannot be streamed)
- *  |------------|---------|----------|---------------------------------------------------
- *  | MUSIC      | 22-23   | 2x  48   | Triple buffered music streaming
- *  | ADPCM_XL   | 20-21   | 2x  128  | Large single buffer ADPCM
- *  | GP_L       | 16-19   | 4x  32   | General purpose large
- *  | GP_S       | 00-15   | 16x 16   | General purpose small
- *
- *  Use cases:
- *  MUSIC
- *   - Streaming music from an ogg vorbis decoder
- *  ADPCM_XL
- *   - Playing extra long ADPCM encoded sounds (eg. ambient sounds)
- *  GP_L
- *   - Stereo PCM16 streaming (dual 16 kB buffer streamed)
- *   - Medium length ADPCM sounds (single buffer oneshot)
- *  GP_S
- *   - Mono PCM16 or any PCM8 streaming (dual 8 kB buffer streamed)
- *   - Short length ADPCM sounds (single buffer oneshot)
- *   - Fallback for stereo PCM16 if GP_L is full
- *
- *  ==========================================
- *  16bit MONO PCM/ADPCM REFERENCE
- *  ==========================================
- *  | Buffer    | Playback Time [ms]/[ms] PCM/ADPCM per sample rate
- *  | Size [kB] | 48'000 Hz  | 44'100 Hz  | 22'050 Hz   | 11'025 Hz   | 8'000 Hz
- *  |-----------|------------|------------|-------------|-------------|----------
- *  | 8 kB      |  85 /  341 |  92 /  372 |  186 /  743 |  372 / 1.5s |  512 / 2.0s
- *  | 16 kB     | 170 /  683 | 186 /  743 |  372 / 1.5s |  743 / 3.0s | 1.0s / 4.1s
- *  | 32 kB     | 341 / 1.4s | 372 / 1.5s |  743 / 3.0s | 1.5s / 5.9s | 2.0s / 8.2s
- *  | 64 kB     | 683 / 2.7s | 743 / 3.0s | 1.5s / 5.9s | 3.0s / 12s  | 4.1s / 16s
- *
- *  - 16bit stereo PCM will be the PCM time / 2 (stereo adpcm isnt supported by ndsp)
- *  - 8bit mono PCM will be the PCM time * 2
- *  - 8bit stereo PCM will be equal to the pcm time
- */
+#define MUSIC1_PATH "romfs:/audio/song1_pcm16_44100hz_stereo.ogg"
 
+#define MUSIC2_PATH "romfs:/audio/song2_pcm16_48000hz_mono.ogg"
 
-
-#define MUSIC1_PATH "romfs:/audio/song1_pcm16_44100hz_stereo.raw"
-#define MUSIC1_SAMPLE_RATE 44100.0f
-#define MUSIC1_FORMAT NDSP_FORMAT_STEREO_PCM16
-
-#define MUSIC2_PATH "romfs:/audio/song2_pcm16_48000hz_mono.raw"
-#define MUSIC2_SAMPLE_RATE 48000.0f
-#define MUSIC2_FORMAT NDSP_FORMAT_MONO_PCM16
-
-#define STREAM_BUF_SIZE (32*1024) // about 170ms for stereo 16bit PCM at 48kHz
+#define STREAM_BUF_SIZE (16*1024) // about 170ms for stereo 16bit PCM at 48kHz
 #define N_BUFFERS_PER_CHANNEL 3 // 2 (dual buffering, good for sfx) or 3 (triple, more robust for music)
 #define AUDIO_THREAD_STACK_SIZE (1024*1024) // 1MB
 
 typedef struct {
     const char *filePath;
-    u16 format;
-    float sampleRate;
     bool pending;
 } AudioRequest;
 
-volatile AudioRequest currentAudioRequest = {nullptr, 0, 0, 0};
+volatile AudioRequest currentAudioRequest = {nullptr, false};
 
 typedef enum {
     BUFF_REFILL_RES_OK,
@@ -79,32 +33,31 @@ volatile bool audioThreadRunning = true;
 ndspWaveBuf ndspBuffers[N_BUFFERS_PER_CHANNEL];
 s16 *pcmBuffers[N_BUFFERS_PER_CHANNEL];
 
-void play(const char* filePath, const u16 format, const float sampleRate) {
+void play(const char* filePath) {
     currentAudioRequest.filePath = filePath;
-    currentAudioRequest.format = format;
-    currentAudioRequest.sampleRate = sampleRate;
     currentAudioRequest.pending = true;
     LightEvent_Signal(&audioRequestEvent);
 }
 
-inline int getBytesPerSample(const u16 format) {
-    const int nChannels = format & 0x03; // 0x01 = mono, 0x02 = stereo (mask=0x03)
-    const int bytesPerChannel = format & 0x04 ? 2 : 1; // 0x00 = 8bit, 0x04 = 16bit (mask=0x04)
-    return nChannels * bytesPerChannel;
-}
-
-bufferRefillResult fillBufferFromFile(const int buffer_index, FILE *file) {
-    // read new PCM data from file
-    const size_t bytesRead = fread(pcmBuffers[buffer_index], 1,STREAM_BUF_SIZE, file);
-    if (bytesRead == 0) {
-        if (feof(file)) return BUFF_REFILL_RES_FILEREAD_EOF;
-        if (ferror(file)) return BUFF_REFILL_RES_FILEREAD_ERROR;
+bufferRefillResult fillBufferFromFile(const int buffer_index, OggVorbis_File* vorbisFile, const u8* bytesPerSample) {
+    // read and decode new PCM data from file
+    // ov_read does not always read the specified bytes if the current stream blocks are not a multiple of the buffer size.
+    // therefore multiple reads in a loop
+    long totalBytesRead = 0;
+    while (totalBytesRead < STREAM_BUF_SIZE) {
+        char* pcmBufferWithOffset = ((char*)pcmBuffers[buffer_index]) + totalBytesRead;
+        const int bytesToRead = STREAM_BUF_SIZE - totalBytesRead;
+        const long bytesRead = ov_read(vorbisFile, pcmBufferWithOffset, bytesToRead, nullptr);
+        if (bytesRead == 0) return BUFF_REFILL_RES_FILEREAD_EOF;
+        if (bytesRead < 0) return BUFF_REFILL_RES_FILEREAD_ERROR;
+        totalBytesRead += bytesRead;
     }
+
     // update buffer struct
     ndspBuffers[buffer_index].data_pcm16 = pcmBuffers[buffer_index];
-    ndspBuffers[buffer_index].nsamples = bytesRead / getBytesPerSample(currentAudioRequest.format);
+    ndspBuffers[buffer_index].nsamples = totalBytesRead / *bytesPerSample;
     // ensure buffer is actually in memory and not in CPU cache
-    const Result flushResult = DSP_FlushDataCache(pcmBuffers[buffer_index], bytesRead);
+    const Result flushResult = DSP_FlushDataCache(pcmBuffers[buffer_index], totalBytesRead);
     if (flushResult) return BUFF_REFILL_RES_MEMORY_FLUSH_ERROR;
     // queue buffer
     ndspChnWaveBufAdd(0, &ndspBuffers[buffer_index]);
@@ -136,13 +89,13 @@ bool initBuffers() {
     return true;
 }
 
-void setupChannel(const u16 format, const float sampleRate) {
+void setupChannel(const vorbis_info* vi) {
     ndspSetOutputMode(NDSP_OUTPUT_STEREO);
     ndspChnReset(0);
     ndspChnInitParams(0);
     ndspChnSetInterp(0, NDSP_INTERP_POLYPHASE);
-    ndspChnSetRate(0, sampleRate);
-    ndspChnSetFormat(0, format);
+    ndspChnSetRate(0, (float)vi->rate);
+    ndspChnSetFormat(0, vi->channels == 1 ? NDSP_FORMAT_MONO_PCM16 : NDSP_FORMAT_STEREO_PCM16);
 }
 
 void audioCallback([[maybe_unused]] void* unused_) {
@@ -150,46 +103,51 @@ void audioCallback([[maybe_unused]] void* unused_) {
 }
 
 
-inline void handleThreadRequest(FILE** pcmFile) {
+inline void handleThreadRequest(OggVorbis_File* vorbisFile, u8* bytesPerSample) {
 
     if (currentAudioRequest.pending) {
         printf("play requested\n");
         currentAudioRequest.pending = false;
-        // setup channel
-        setupChannel(currentAudioRequest.format, currentAudioRequest.sampleRate);
         // open file
-        *pcmFile = fopen(currentAudioRequest.filePath, "rb");
-        if (!*pcmFile) {
-            printf("Failed to open PCM file: %s\n", currentAudioRequest.filePath);
+        FILE* file = fopen(currentAudioRequest.filePath, "rb");
+        const int error = ov_open(file, vorbisFile, nullptr, 0);
+        if (error) {
+            printf("Failed to open ogg vorbis file: %s\n", currentAudioRequest.filePath);
+            fclose(file);
             sleep(3);
             return;
         }
+        const vorbis_info* vi = ov_info(vorbisFile, -1);
+        *bytesPerSample = vi->channels * 2;
+        // setup channel
+        setupChannel(vi);
         // prefill buffers
         for (int i = 0; i < N_BUFFERS_PER_CHANNEL; i++) {
             printf("buff %d prefill\n", i);
-            const bufferRefillResult res = fillBufferFromFile(i, *pcmFile);
+            const bufferRefillResult res = fillBufferFromFile(i, vorbisFile, bytesPerSample);
             printRefillResult(res);
             if (res == BUFF_REFILL_RES_FILEREAD_EOF)
-                fclose(*pcmFile);
+                ov_clear(vorbisFile);
         }
     }
 
     for (int i = 0; i < N_BUFFERS_PER_CHANNEL; i++) {
         if (ndspBuffers[i].status == NDSP_WBUF_DONE) {
             printf("buff %d refill\n", i);
-            const bufferRefillResult res = fillBufferFromFile(i, *pcmFile);
+            const bufferRefillResult res = fillBufferFromFile(i, vorbisFile, bytesPerSample);
             printRefillResult(res);
         }
     }
 }
 
 void audioThread([[maybe_unused]] void* unused_) {
-    FILE *currentPcmFile = nullptr;
+    OggVorbis_File currentVorbisFile;
+    u8 currentBytesPerSample;
     printf("Audio thread ready\n");
 
     // main audio thread loop
     while (audioThreadRunning) {
-        handleThreadRequest(&currentPcmFile);
+        handleThreadRequest(&currentVorbisFile, &currentBytesPerSample);
         LightEvent_Wait(&audioRequestEvent);
     }
 }
@@ -220,14 +178,14 @@ int main(void) {
     // main loop
     while (aptMainLoop()) {
         hidScanInput();
-        u32 keysdown = hidKeysDown();
+        const u32 keysdown = hidKeysDown();
         if (keysdown & KEY_START) break;
         if (keysdown & KEY_A) {
             printf("requesting play song 1\n");
-            play(MUSIC1_PATH, MUSIC1_FORMAT, MUSIC1_SAMPLE_RATE);
+            play(MUSIC1_PATH);
         } else if (keysdown & KEY_B) {
             printf("requesting play song 2\n");
-            play(MUSIC2_PATH, MUSIC2_FORMAT, MUSIC2_SAMPLE_RATE);
+            play(MUSIC2_PATH);
         }
         gspWaitForVBlank();
         gfxSwapBuffers();
